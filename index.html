@@ -1,0 +1,430 @@
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adrian's Strategy — US30 Liquidity Sweep Backtester</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b22; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --green:#3fb950; --red:#f85149;
+    --accent:#58a6ff; --amber:#d29922;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       background:var(--bg);color:var(--text);padding:20px;line-height:1.5}
+  h1{font-size:20px;margin-bottom:4px}
+  h2{font-size:14px;color:var(--muted);font-weight:500;margin-bottom:16px}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px}
+  label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  input,select{width:100%;padding:7px 9px;background:var(--bg);border:1px solid var(--border);
+               border-radius:6px;color:var(--text);font-size:13px}
+  button{width:100%;margin-top:16px;padding:10px;background:var(--accent);color:#0e1117;
+         border:none;border-radius:6px;font-weight:600;font-size:14px;cursor:pointer}
+  button:hover{filter:brightness(1.1)}
+  button.secondary{background:var(--border);color:var(--text);margin-top:8px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  @media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px}
+  .stat .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{font-size:20px;font-weight:700;margin-top:2px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{padding:7px 8px;text-align:right;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:500;text-align:right;position:sticky;top:0;background:var(--panel)}
+  th:first-child,td:first-child{text-align:left}
+  .scroll{max-height:420px;overflow-y:auto}
+  canvas{width:100%;height:260px;display:block;background:var(--bg);border-radius:6px}
+  .note{font-size:11px;color:var(--muted);margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+  .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .badge.win{background:rgba(63,185,80,.15);color:var(--green)}
+  .badge.loss{background:rgba(248,81,73,.15);color:var(--red)}
+  .badge.open{background:rgba(210,153,34,.15);color:var(--amber)}
+  .brand{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;
+         font-weight:700;letter-spacing:.5px;background:rgba(88,166,255,.15);
+         color:var(--accent);margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<span class="brand">ADRIAN'S STRATEGY</span>
+<h1>US30 — Adrian's Strategy</h1>
+<h2>Equal-low liquidity sweep + close-back recovery · 1:3 RR · browser backtester</h2>
+
+<div class="grid">
+
+  <!-- ============ CONTROLS ============ -->
+  <div class="panel">
+    <h3 style="font-size:13px;margin-bottom:8px">Adrian's Strategy — Parameters</h3>
+
+    <label>Pivot lookback (bars each side)</label>
+    <input id="pivotLen" type="number" value="5" min="2" max="50">
+
+    <label>Equal-low tolerance (points)</label>
+    <input id="tolerance" type="number" value="15" min="1" max="200">
+
+    <label>Minimum sweep penetration (points)</label>
+    <input id="minPen" type="number" value="5" min="0" max="100">
+
+    <label>Stop loss (points)</label>
+    <input id="sl" type="number" value="250" min="10">
+
+    <label>Take profit (points) — RR 1:3</label>
+    <input id="tp" type="number" value="750" min="10">
+
+    <label>Initial capital ($)</label>
+    <input id="capital" type="number" value="10000" min="100">
+
+    <label>Risk per trade (% of capital)</label>
+    <input id="riskPct" type="number" value="1" min="0.1" max="10" step="0.1">
+
+    <label>Data source</label>
+    <select id="dataMode">
+      <option value="synthetic">Synthetic US30-like data (demo)</option>
+      <option value="csv">Paste CSV (open,high,low,close)</option>
+    </select>
+
+    <div id="csvBox" style="display:none;margin-top:10px">
+      <label>CSV data (one bar per line)</label>
+      <textarea id="csvData" rows="6" style="width:100%;padding:7px;background:var(--bg);
+        border:1px solid var(--border);border-radius:6px;color:var(--text);
+        font-family:monospace;font-size:11px" placeholder="42500,42540,42480,42520"></textarea>
+    </div>
+
+    <button onclick="run()">Run Adrian's Strategy</button>
+    <button class="secondary" onclick="loadSampleCsv()">Load Sample CSV</button>
+
+    <div class="note">
+      <strong>Adrian's Strategy logic:</strong> Identify equal lows (pivots within tolerance).
+      Enter long when price sweeps below the zone by ≥ penetration but closes back above it.
+      SL below sweep low by <em>SL points</em>; TP = SL × RR. One position at a time.
+    </div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div>
+    <div class="stats">
+      <div class="stat"><div class="k">Net P&amp;L</div><div class="v" id="sPnl">—</div></div>
+      <div class="stat"><div class="k">Return</div><div class="v" id="sRet">—</div></div>
+      <div class="stat"><div class="k">Max Drawdown</div><div class="v" id="sDd">—</div></div>
+      <div class="stat"><div class="k">Profit Factor</div><div class="v" id="sPf">—</div></div>
+      <div class="stat"><div class="k">Trades</div><div class="v" id="sTrades">—</div></div>
+      <div class="stat"><div class="k">Win Rate</div><div class="v" id="sWr">—</div></div>
+      <div class="stat"><div class="k">Avg Win</div><div class="v" id="sAw">—</div></div>
+      <div class="stat"><div class="k">Avg Loss</div><div class="v" id="sAl">—</div></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px">
+      <canvas id="equity"></canvas>
+    </div>
+
+    <div class="panel">
+      <h3 style="font-size:13px;margin-bottom:8px">Adrian's Strategy — Trade Log</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Entry bar</th><th>Entry</th><th>Zone low</th>
+            <th>Exit</th><th>Result</th><th>P&amp;L ($)</th><th>R</th>
+          </tr></thead>
+          <tbody id="log"><tr><td colspan="8" style="color:var(--muted);text-align:center">
+            Run Adrian's Strategy to see trades</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   ADRIAN'S STRATEGY — US30 Liquidity Sweep Backtester
+   ========================================================= */
+
+/* ---------- 1. DATA GENERATION ---------- */
+function syntheticData(n = 6000, start = 42500) {
+  const bars = [];
+  let price = start;
+  for (let i = 0; i < n; i++) {
+    const drift = 0.6;
+    const vol = 8 + 6 * Math.abs(Math.sin(i / 300));
+    const shock = (Math.random() < 0.004) ? (Math.random() - 0.5) * 120 : 0;
+    const ret = drift + (Math.random() - 0.5) * vol + shock;
+    const open = price;
+    const close = price + ret;
+    const high = Math.max(open, close) + Math.random() * 6;
+    const low  = Math.min(open, close) - Math.random() * 6;
+    bars.push({ t: i, o: open, h: high, l: low, c: close });
+    price = close;
+  }
+  return bars;
+}
+
+/* ---------- 2. PIVOT / ZONE DETECTION ---------- */
+function pivotLows(bars, len) {
+  const pivots = [];
+  for (let i = len; i < bars.length - len; i++) {
+    let isLow = true;
+    for (let j = i - len; j <= i + len; j++) {
+      if (j === i) continue;
+      if (bars[j].l < bars[i].l) { isLow = false; break; }
+    }
+    if (isLow) pivots.push({ idx: i, price: bars[i].l });
+  }
+  return pivots;
+}
+
+function buildZones(pivots, tolerance) {
+  const zones = [];
+  let cluster = [];
+  for (const pv of pivots) {
+    if (cluster.length === 0) { cluster.push(pv); continue; }
+    const ref = cluster[cluster.length - 1].price;
+    if (Math.abs(pv.price - ref) <= tolerance) {
+      cluster.push(pv);
+    } else {
+      if (cluster.length >= 2)
+        zones.push({ low: avg(cluster), lastIdx: cluster[cluster.length-1].idx });
+      cluster = [pv];
+    }
+  }
+  if (cluster.length >= 2)
+    zones.push({ low: avg(cluster), lastIdx: cluster[cluster.length-1].idx });
+  return zones;
+}
+
+function avg(arr) { return arr.reduce((s, x) => s + x.price, 0) / arr.length; }
+
+/* ---------- 3. ADRIAN'S STRATEGY ENGINE ---------- */
+function adriansStrategy(bars, p) {
+  const pivots = pivotLows(bars, p.pivotLen);
+  const zones  = buildZones(pivots, p.tolerance);
+  const trades = [];
+  let equity = p.capital;
+  let inPos  = false;
+  let pos    = null;
+
+  for (let i = 1; i < bars.length; i++) {
+    const b = bars[i];
+
+    /* --- manage open position --- */
+    if (inPos) {
+      if (b.l <= pos.sl) {
+        const pnl = (pos.sl - pos.entry) * pos.size;
+        equity += pnl;
+        trades.push({ ...pos, exit: pos.sl, exitIdx: i, pnl, r: -1 });
+        inPos = false;
+      } else if (b.h >= pos.tp) {
+        const pnl = (pos.tp - pos.entry) * pos.size;
+        equity += pnl;
+        trades.push({ ...pos, exit: pos.tp, exitIdx: i, pnl, r: 3 });
+        inPos = false;
+      }
+      continue;
+    }
+
+    /* --- look for sweep signal --- */
+    for (let z = zones.length - 1; z >= 0; z--) {
+      const zone = zones[z];
+      if (zone.lastIdx >= i - 1) continue;
+      if (zone.used) continue;
+
+      const penetration = zone.low - b.l;
+      const closesBack  = b.c > zone.low;
+
+      if (penetration >= p.minPen && closesBack && b.c > b.o) {
+        const entry = b.c;
+        const sl    = b.l - p.sl;
+        const tp    = entry + (entry - sl) * (p.tp / p.sl);
+        const riskCash = equity * (p.riskPct / 100);
+        const size     = riskCash / (entry - sl);
+
+        pos = { entryIdx: i, entry, sl, tp, size, zoneLow: zone.low };
+        zone.used = true;
+        inPos = true;
+        break;
+      }
+    }
+  }
+
+  if (inPos) {
+    const b = bars[bars.length - 1];
+    const pnl = (b.c - pos.entry) * pos.size;
+    equity += pnl;
+    trades.push({ ...pos, exit: b.c, exitIdx: bars.length - 1, pnl,
+                  r: pnl / (pos.size * (pos.entry - pos.sl)) });
+  }
+
+  return { trades, equity };
+}
+
+/* ---------- 4. STATISTICS ---------- */
+function stats(trades, capital, finalEquity) {
+  const wins   = trades.filter(t => t.pnl > 0);
+  const losses = trades.filter(t => t.pnl <= 0);
+  const grossWin  = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+
+  let peak = capital, dd = 0, eq = capital;
+  for (const t of trades) { eq += t.pnl; peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq); }
+
+  return {
+    n: trades.length,
+    winRate: trades.length ? wins.length / trades.length * 100 : 0,
+    profitFactor: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0),
+    avgWin: wins.length ? grossWin / wins.length : 0,
+    avgLoss: losses.length ? grossLoss / losses.length : 0,
+    maxDD: dd,
+    netPnl: finalEquity - capital,
+    retPct: (finalEquity - capital) / capital * 100
+  };
+}
+
+/* ---------- 5. UI ---------- */
+function run() {
+  const p = {
+    pivotLen: +document.getElementById('pivotLen').value,
+    tolerance: +document.getElementById('tolerance').value,
+    minPen: +document.getElementById('minPen').value,
+    sl: +document.getElementById('sl').value,
+    tp: +document.getElementById('tp').value,
+    capital: +document.getElementById('capital').value,
+    riskPct: +document.getElementById('riskPct').value,
+  };
+
+  let bars;
+  if (document.getElementById('dataMode').value === 'csv') {
+    bars = parseCsv(document.getElementById('csvData').value);
+    if (bars.length < 50) { alert('Need at least 50 CSV bars.'); return; }
+  } else {
+    bars = syntheticData(6000);
+  }
+
+  const { trades, equity } = adriansStrategy(bars, p);
+  const s = stats(trades, p.capital, equity);
+
+  set('sPnl', fmtMoney(s.netPnl), s.netPnl >= 0 ? 'pos' : 'neg');
+  set('sRet', s.retPct.toFixed(2) + '%', s.retPct >= 0 ? 'pos' : 'neg');
+  set('sDd', fmtMoney(s.maxDD), 'neg');
+  set('sPf', s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2),
+      s.profitFactor >= 1.5 ? 'pos' : s.profitFactor >= 1 ? 'warn' : 'neg');
+  set('sTrades', s.n, '');
+  set('sWr', s.winRate.toFixed(2) + '%', s.winRate >= 40 ? 'pos' : 'warn');
+  set('sAw', fmtMoney(s.avgWin), 'pos');
+  set('sAl', fmtMoney(s.avgLoss), 'neg');
+
+  drawEquity(trades, p.capital);
+
+  const tbody = document.getElementById('log');
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted);text-align:center">No trades found — loosen Adrian\'s Strategy parameters</td></tr>';
+  } else {
+    tbody.innerHTML = trades.map((t, i) => {
+      const badge = t.pnl > 0 ? '<span class="badge win">WIN</span>'
+                  : t.pnl < 0 ? '<span class="badge loss">LOSS</span>'
+                  : '<span class="badge open">BE</span>';
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>#${t.entryIdx}</td>
+        <td>${t.entry.toFixed(1)}</td>
+        <td>${t.zoneLow.toFixed(1)}</td>
+        <td>${t.exit.toFixed(1)}</td>
+        <td>${badge}</td>
+        <td class="${t.pnl >= 0 ? 'pos' : 'neg'}">${fmtMoney(t.pnl)}</td>
+        <td>${t.r.toFixed(2)}R</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+function set(id, val, cls) {
+  const el = document.getElementById(id);
+  el.textContent = val;
+  el.className = 'v ' + (cls || '');
+}
+function fmtMoney(v) {
+  return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US', {maximumFractionDigits: 0});
+}
+
+/* ---------- 6. EQUITY CURVE ---------- */
+function drawEquity(trades, capital) {
+  const cv = document.getElementById('equity');
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const eq = [capital];
+  let cur = capital;
+  for (const t of trades) { cur += t.pnl; eq.push(cur); }
+
+  const pad = 28;
+  const min = Math.min(...eq), max = Math.max(...eq);
+  const range = (max - min) || 1;
+  const x = i => pad + (i / Math.max(eq.length - 1, 1)) * (w - pad * 2);
+  const y = v => h - pad - ((v - min) / range) * (h - pad * 2);
+
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 4; g++) {
+    const yy = pad + (g / 4) * (h - pad * 2);
+    ctx.beginPath(); ctx.moveTo(pad, yy); ctx.lineTo(w - pad, yy); ctx.stroke();
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif';
+    ctx.fillText('$' + Math.round(max - (g / 4) * range).toLocaleString(), 2, yy + 3);
+  }
+
+  const by = y(capital);
+  ctx.strokeStyle = '#d29922'; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(pad, by); ctx.lineTo(w - pad, by); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const up = eq[eq.length - 1] >= capital;
+  ctx.strokeStyle = up ? '#3fb950' : '#f85149';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  eq.forEach((v, i) => i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v)));
+  ctx.stroke();
+
+  ctx.lineTo(x(eq.length - 1), h - pad);
+  ctx.lineTo(x(0), h - pad);
+  ctx.closePath();
+  ctx.fillStyle = up ? 'rgba(63,185,80,.08)' : 'rgba(248,81,73,.08)';
+  ctx.fill();
+}
+
+/* ---------- 7. CSV ---------- */
+function parseCsv(text) {
+  const bars = [];
+  for (const line of text.trim().split(/\r?\n/)) {
+    const parts = line.split(',').map(s => s.trim());
+    if (parts.length < 4) continue;
+    const nums = parts.slice(-4).map(Number);
+    if (nums.some(isNaN)) continue;
+    bars.push({ t: bars.length, o: nums[0], h: nums[1], l: nums[2], c: nums[3] });
+  }
+  return bars;
+}
+
+function loadSampleCsv() {
+  const bars = syntheticData(2000);
+  document.getElementById('csvData').value = bars.map(b =>
+    `${b.o.toFixed(1)},${b.h.toFixed(1)},${b.l.toFixed(1)},${b.c.toFixed(1)}`
+  ).join('\n');
+  document.getElementById('dataMode').value = 'csv';
+  document.getElementById('csvBox').style.display = 'block';
+  alert('Sample CSV loaded for Adrian\'s Strategy (2,000 bars). Click Run.');
+}
+
+document.getElementById('dataMode').addEventListener('change', e => {
+  document.getElementById('csvBox').style.display =
+    e.target.value === 'csv' ? 'block' : 'none';
+});
+
+window.addEventListener('load', () => setTimeout(run, 100));
+</script>
+</body>
+</html>
